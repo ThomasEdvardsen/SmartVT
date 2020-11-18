@@ -33,7 +33,7 @@
 		local DEFAULT_constC = 60
 		local DEFAULT_constT = 1
 		local heaterStatus = "0"
-        local DeltaMax = 1 -- Seuil de tolerence au dessus de la consigne
+        local DeltaMax = 1 -- Tolerance threshold above the setpoint
         local debug = false
         
 		
@@ -84,16 +84,16 @@
             data.inhibited = tonumber(readVariableOrInit(lul_device,SVT_SID, "Inhibited", "0" ))
             data.EnergyModeStatus = readVariableOrInit(lul_device,HVUOM_SID, "EnergyModeStatus", "Normal" )
             data.ModeStatus = readVariableOrInit(lul_device,HVUOM_SID, "ModeStatus", "Off" )
-            data.heatTimeleft = tonumber(readVariableOrInit(lul_device,SVT_SID, "heatTimeleft", "0" )) -- Temps restant en sec avant fin de chauffe
-            data.calTimeleft = tonumber(readVariableOrInit(lul_device,SVT_SID, "calTimeleft", "0" )) -- Temps restant en sec avec nouveau calcul de regul
+            data.heatTimeleft = tonumber(readVariableOrInit(lul_device,SVT_SID, "heatTimeleft", "0" )) -- Time remaining in sec before the end of heating
+            data.calTimeleft = tonumber(readVariableOrInit(lul_device,SVT_SID, "calTimeleft", "0" )) -- Time remaining in sec before new calculation of regulation
             data.EndHeatTimesStamp = tonumber(readVariableOrInit(lul_device,SVT_SID, "EndHeatTimesStamp", "0" ))
             data.TimesStamp = tonumber(readVariableOrInit(lul_device,SVT_SID, "TimesStamp", "0" ))
-            data.AutoLearning = toListOfNumbers(readVariableOrInit(lul_device,SVT_SID, "AutoLearning", "0,1,1,0,0,0" )) -- init - poid I,poid E, Tint init, Text init,%
+            data.AutoLearning = toListOfNumbers(readVariableOrInit(lul_device,SVT_SID, "AutoLearning", "0,1,1,0,0,0" )) -- init - weight I, weight E, Tint init, Text init,%
         
             return data
         end
 				
-		-- Fonction lancee si changement d'etat d'une variable watchee
+		-- Function launched if status change of a watermarked variable
 		function watch_callback(lul_device, lul_service, lul_variable, lul_value_old, lul_value_new)
 			local data = readSettings(SmartVT1_id)
 			if (Inibitors(data.inhibitSensors)) then
@@ -111,12 +111,12 @@
 			end
 		end
 		
-		-- Action a mener des que les variables surveillees changent d'etat
+		-- Action to be taken as soon as the monitored variables change state
 		function gestionTempoOuverture(lul_device)
             lul_device = tonumber(lul_device)
 			local data = readSettings(lul_device)
             local ModeState = luup.variable_get (HVOS_SID, "ModeState", lul_device)
-			-- On verifie que Inibitors est toujours present apres la tempo pour desactiver le chauffage
+			-- We check that Inhibitors are still present after the timer to deactivate the heating
 			if Inibitors(data.inhibitSensors) and (data.inhibited == 0) then
                 luup.variable_set (SVT_SID, "Inhibited", "1", lul_device)
 				updateStatus(lul_device)
@@ -126,7 +126,7 @@
 		function gestionTempoFermeture(lul_device)
             lul_device = tonumber(lul_device)
 			local data = readSettings(lul_device)
-			-- On verifie que Inibitors est toujours absent apres la tempo pour activer le chauffage
+			-- We check that Inhibitors are still absent after the time delay to activate the heating
 			if not(Inibitors(data.inhibitSensors)) and (data.inhibited == 1) then
                 luup.variable_set (SVT_SID, "Inhibited", "0", lul_device)
 				updateStatus(lul_device)
@@ -140,12 +140,12 @@
 			
 			if (data.ModeStatus == "HeatOn") then
         
-                -- Si une tempo est paramétré pour le mode forced :
+                -- If a temp is set for forced mode
                 if data.ForcedTempo ~= nil and data.ForcedTempo &gt; 0 then
-                    -- Gestion du tempo du mode forced
+                    -- Forced mode temp management
                     local now = os.time()
                     if ( now &gt;=  data.EndHeatTimesStamp) then
-                        -- Fin du mode forced
+                        -- End of forced mode
                         luup.call_action(HVUOM_SID, "SetModeTarget", { NewModeTarget = "AutoChangeOver" }, lul_device)
                         return
                     else
@@ -172,7 +172,7 @@
         
 			elseif (data.ModeStatus == "AutoChangeOver") then
         
-                -- Gestion de l'intelligence
+                -- Intelligence management
                 if ( os.time() &gt;=  (data.TimesStamp + data.CalcPeriod )) then
                     -- On relance le calcul de la regulation tous les data.CalcPeriod secondes
 					AutoChangeOver(lul_device,true,true)
@@ -181,7 +181,7 @@
 				local tempcal = (data.TimesStamp + data.CalcPeriod)
 
 
-                -- Gestion des commandes
+                -- order management
                 local ModeState = luup.variable_get (HVOS_SID, "ModeState", lul_device)
 				local now = os.time()
 				data.heatTimeleft = data.EndHeatTimesStamp - now -- Temps restant avec fin de chauffe
@@ -195,7 +195,7 @@
                     SetTargetTable("0",data.heaters)
         
                     local inhibited, time = Inibitors(data.inhibitSensors)
-                    if not(inhibited) and (time + data.CloseTempo) &lt; now then -- la tempo est terminee (securite pour assurer la reprise du chauffage)
+                    if not(inhibited) and (time + data.CloseTempo) &lt; now then -- the temp is over (safety to ensure the resumption of heating)
                         luup.variable_set (SVT_SID, "Inhibited", "0", lul_device)
                         luup.call_timer("updateStatus", 1, "1", "", tostring(lul_device))
                         return
@@ -203,7 +203,7 @@
         
                 elseif (ModeState == "Heating") then
         
-                    if ( Tint &gt;= (Consigne(data) + DeltaMax)) then -- temperature de consigne + Delta depasse : On relance la chargement auto
+                    if ( Tint &gt;= (Consigne(data) + DeltaMax)) then -- setpoint temperature + Delta exceeded: Auto loading is restarted
                         AutoChangeOver(lul_device,true,true)
                     end
 
@@ -213,7 +213,7 @@
                         SetTargetTable("1",data.heaters)
                     end
                 elseif(ModeState == "Cooling") then
-                    -- a completer
+                    -- to complete
                 else
                     SetTargetTable("0",data.heaters)
                 end
@@ -316,9 +316,9 @@
             elseif data.AutoLearning[6] == 100 and consigne &gt; Tint then
                 -- Heater was on max but consigne was not reached so we dont learn
                 return false
-            elseif data.TimesStamp &gt; calnow or (calnow - data.TimesStamp) &gt; (data.CalcPeriod * 2)  then -- Evite de tout casser en cas de perte de date de la Vera
+            elseif data.TimesStamp &gt; calnow or (calnow - data.TimesStamp) &gt; (data.CalcPeriod * 2)  then -- Avoids breaking everything in case of loss of date of the Vera
                 return false
-            elseif Tint &gt; data.AutoLearning[4] and consigne &gt; data.AutoLearning[4]  then -- Si Tinterieur sup a Tinterieur initial et Consigne sup a Tinterieur initial
+            elseif Tint &gt; data.AutoLearning[4] and consigne &gt; data.AutoLearning[4]  then -- If the interior is greater than the initial interior and Setpoint greater than the initial interior
                 -- Learn ConstC
                 local ConstC = data.constC * ((consigne - data.AutoLearning[4]) / (Tint - data.AutoLearning[4] )) * (calnow - data.TimesStamp) / data.CalcPeriod
                 ConstC = round((data.constC * data.AutoLearning[2] + ConstC) / (data.AutoLearning[2] +1),1)
@@ -482,8 +482,8 @@
                 elseif lul_settings.NewModeTarget == "HeatOn" then
                     HeatOn(lul_device)
 				else
-					-- ajout de ce block par LV999 le 22/01/2016 pour un effet immédiat de
-					-- la commande "Off" et non par attente timer recurrent de 2 mins
+					-- addition of this block by LV999 on 01/22/2016 for an immediate effect of 
+				        -- the "Off" command and not by waiting for a recurrent timer of 2 mins
 					updateStatus(lul_device)
                 end
 				return 4, 5
@@ -493,7 +493,7 @@
 			<serviceId>urn:upnp-org:serviceId:TemperatureSetpoint1_Heat</serviceId>
 			<name>SetCurrentSetpoint</name>
 			<job>
-			-- On conditionne le lancement des fonctions au mode selectionne pour ne pas recalculer le coef quand on est dans lautre mode
+			-- We condition the launch of the functions in the selected mode so as not to recalculate the coefficient when we are in the other mode
 				luup.variable_set (TSH_SID, "CurrentSetpoint", lul_settings.NewCurrentSetpoint, lul_device)
 				local EnergyModeStatus = luup.variable_get (HVUOM_SID, "EnergyModeStatus", lul_device)
                 local ModeStatus = luup.variable_get (HVUOM_SID, "ModeStatus", lul_device)
@@ -507,7 +507,7 @@
 			<serviceId>urn:upnp-org:serviceId:TemperatureSetpoint1</serviceId>
 			<name>SetCurrentSetpoint</name>
 			<job>
-			-- On conditionne le lancement des fonctions au mode selectionne pour ne pas recalculer le coef quand on est dans lautre mode
+			-- We condition the launch of the functions in the selected mode so as not to recalculate the coefficient when we are in the other mode
 				luup.variable_set (TSH_SID, "CurrentSetpoint", lul_settings.NewCurrentSetpoint, lul_device)
 				luup.variable_set (TSC_SID, "CurrentSetpoint", lul_settings.NewCurrentSetpoint, lul_device)
 				local EnergyModeStatus = luup.variable_get (HVUOM_SID, "EnergyModeStatus", lul_device)
@@ -522,7 +522,7 @@
 			<serviceId>urn:upnp-org:serviceId:TemperatureSetpoint1_Cool</serviceId>
 			<name>SetCurrentSetpoint</name>
 			<job>
-			-- On conditionne le lancement des fonctions au mode selectionne pour ne pas recalculer le coef quand on est dans lautre mode
+			-- We condition the launch of the functions in the selected mode so as not to recalculate the coefficient when we are in the other mode
 				luup.variable_set (TSC_SID, "CurrentSetpoint", lul_settings.NewCurrentSetpoint, lul_device)
 				local EnergyModeStatus = luup.variable_get (HVUOM_SID, "EnergyModeStatus", lul_device)
                 local ModeStatus = luup.variable_get (HVUOM_SID, "ModeStatus", lul_device)
